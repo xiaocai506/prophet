@@ -1,39 +1,41 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
 import os.path
-import pickle
 import platform
 import sys
-
+import os
 from pkg_resources import (
     normalize_path,
     working_set,
     add_activation_listener,
     require,
 )
-from setuptools import setup
+from setuptools import setup, find_packages
 from setuptools.command.build_py import build_py
 from setuptools.command.develop import develop
 from setuptools.command.test import test as test_command
-
+from typing import List
 
 PLATFORM = 'unix'
 if platform.platform().startswith('Win'):
     PLATFORM = 'win'
 
-SETUP_DIR = os.path.dirname(os.path.abspath(__file__))
-MODELS_DIR = os.path.join(SETUP_DIR, 'stan', PLATFORM)
-MODELS_TARGET_DIR = os.path.join('fbprophet', 'stan_models')
+MODEL_DIR = os.path.join('stan', PLATFORM)
+MODEL_TARGET_DIR = os.path.join('fbprophet', 'stan_model')
 
 
-def build_stan_models(target_dir, models_dir=MODELS_DIR):
-    from pystan import StanModel
-    for model_type in ['linear', 'logistic']:
-        model_name = 'prophet_{}_growth.stan'.format(model_type)
-        target_name = '{}_growth.pkl'.format(model_type)
-        with open(os.path.join(models_dir, model_name)) as f:
-            model_code = f.read()
-        sm = StanModel(model_code=model_code)
-        with open(os.path.join(target_dir, target_name), 'wb') as f:
-            pickle.dump(sm, f, protocol=pickle.HIGHEST_PROTOCOL)
+def get_backends_from_env() -> List[str]:
+    from fbprophet.models import StanBackendEnum
+    return os.environ.get("STAN_BACKEND", StanBackendEnum.PYSTAN.name).split(",")
+
+
+def build_models(target_dir):
+    from fbprophet.models import StanBackendEnum
+    for backend in get_backends_from_env():
+        StanBackendEnum.get_backend_class(backend).build_model(target_dir, MODEL_DIR)
 
 
 class BuildPyCommand(build_py):
@@ -41,9 +43,9 @@ class BuildPyCommand(build_py):
 
     def run(self):
         if not self.dry_run:
-            target_dir = os.path.join(self.build_lib, MODELS_TARGET_DIR)
+            target_dir = os.path.join(self.build_lib, MODEL_TARGET_DIR)
             self.mkpath(target_dir)
-            build_stan_models(target_dir)
+            build_models(target_dir)
 
         build_py.run(self)
 
@@ -53,14 +55,31 @@ class DevelopCommand(develop):
 
     def run(self):
         if not self.dry_run:
-            target_dir = os.path.join(self.setup_path, MODELS_TARGET_DIR)
+            target_dir = os.path.join(self.setup_path, MODEL_TARGET_DIR)
             self.mkpath(target_dir)
-            build_stan_models(target_dir)
+            build_models(target_dir)
 
         develop.run(self)
 
 
 class TestCommand(test_command):
+    user_options = [
+        ('test-module=', 'm', "Run 'test_suite' in specified module"),
+        ('test-suite=', 's',
+         "Run single test, case or suite (e.g. 'module.test_suite')"),
+        ('test-runner=', 'r', "Test runner to use"),
+        ('test-slow', 'w', "Test slow suites (default off)"),
+    ]
+
+    def initialize_options(self):
+        super(TestCommand, self).initialize_options()
+        self.test_slow = False
+
+    def finalize_options(self):
+        super(TestCommand, self).finalize_options()
+        if self.test_slow is None:
+            self.test_slow = getattr(self.distribution, 'test_slow', False)
+
     """We must run tests on the build directory, not source."""
 
     def with_project_on_sys_path(self, func):
@@ -95,33 +114,36 @@ class TestCommand(test_command):
             working_set.__init__()
 
 
+with open('requirements.txt', 'r') as f:
+    install_requires = f.read().splitlines()
+
 setup(
     name='fbprophet',
-    version='0.2.1',
+    version='0.6',
     description='Automatic Forecasting Procedure',
     url='https://facebook.github.io/prophet/',
-    author='Sean J. Taylor <sjt@fb.com>, Ben Letham <bletham@fb.com>',
-    author_email='sjt@fb.com',
-    license='BSD',
-    packages=['fbprophet', 'fbprophet.tests'],
+    author='Sean J. Taylor <sjtz@pm.me>, Ben Letham <bletham@fb.com>',
+    author_email='sjtz@pm.me',
+    license='MIT',
+    packages=find_packages(),
     setup_requires=[
     ],
-    install_requires=[
-        'matplotlib',
-        'pandas>=0.18.1',
-        'pystan>=2.14',
-    ],
+    install_requires=install_requires,
     zip_safe=False,
     include_package_data=True,
-    # For Python 3, Will enforce that tests are run after a build.
-    use_2to3=True,
     cmdclass={
         'build_py': BuildPyCommand,
         'develop': DevelopCommand,
         'test': TestCommand,
     },
     test_suite='fbprophet.tests',
+    classifiers=[
+        'Programming Language :: Python',
+        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.7',
+    ],
     long_description="""
-Implements a procedure for forecasting time series data based on an additive model where non-linear trends are fit with yearly and weekly seasonality, plus holidays.  It works best with daily periodicity data with at least one year of historical data.  Prophet is robust to missing data, shifts in the trend, and large outliers.
+Implements a procedure for forecasting time series data based on an additive model where non-linear trends are fit with yearly, weekly, and daily seasonality, plus holiday effects. It works best with time series that have strong seasonal effects and several seasons of historical data. Prophet is robust to missing data and shifts in the trend, and typically handles outliers well.
 """
 )

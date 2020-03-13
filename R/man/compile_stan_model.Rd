@@ -4,11 +4,7 @@
 \alias{compile_stan_model}
 \title{Compile Stan model}
 \usage{
-compile_stan_model(model)
-}
-\arguments{
-\item{model}{String 'linear' or 'logistic' to specify a linear or logistic
-trend.}
+compile_stan_model()
 }
 \value{
 Stan model.
